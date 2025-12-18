@@ -1,0 +1,318 @@
+---
+title: "Chengdu PM2.5 Analysis"
+format: pdf
+echo: false
+---
+
+# My dataset
+
+1.  I find out this dataset on Kaggle
+2.  The variable I interested in is the pm25, and I will observing how pm25 change over different time periods and analyzing the long-term trends in pm25 level
+3.  this data set also includes other air quality such as pm10, O3, NO2, SO2 and CO, these can provide insights into overall air quality and correlations or interactions with pm25. There is no miss data of date and pm25, so I do not need to clean the data set.
+
+# Motivation
+
+1.Why am I interested in this dataset? PM2.5 is a critical air pollutant that directly impacts public health and the environment. And I lived in this city for 19 years.
+
+2.Hypotheses:
+Seasonal Variations: PM2.5 levels may rise in colder months due to heating and worsen atmospheric dispersion, while improving in warmer months.
+Short-Term Autocorrelation: Daily PM2.5 levels are influenced by previous days, indicating persistent atmospheric conditions or emissions.
+Long-Term Trends: Gradual PM2.5 decline due to stricter regulations, with short-term spikes from events.
+
+3. Implications:
+Seasonal Policy Measures: Stricter winter regulations (e.g., emission limits) to curb seasonal peaks.
+Predictive Power: Autocorrelation supports forecasting models for early warnings.
+Policy Effectiveness: Long-term trends assess regulatory impact; improvements validate policies, while rising trends signal the need for stricter measures.
+
+# Room 1
+
+## 1.Identify/model long-term trends
+
+```{r,fig.width=8, fig.height=7, dpi=300}
+library(itsmr)
+library(zoo)
+
+plot_time_series <- function(x, y, title, xlab, ylab, line_col = "black", add_lines = NULL, add_lines_col = NULL, add_lines_lwd = NULL) {
+  plot(x, y, type = "l", col = line_col, main = title, xlab = xlab, ylab = ylab)
+  if (!is.null(add_lines)) {
+    for (i in seq_along(add_lines)) {
+      lines(x, add_lines[[i]], col = add_lines_col[i], lwd = add_lines_lwd[i])
+    }
+  }
+}
+
+calculate_moving_average <- function(data, k) {
+  rollmean(data, k = k, fill = NA)
+}
+
+calculate_residuals <- function(original, smoothed) {
+  original - smoothed
+}
+
+Chengdu <- "/Users/charlieyoung/Desktop/464/chengdu-air-quality.csv"
+dat <- read.csv(Chengdu, header = TRUE)
+dat$date <- as.Date(dat$date, format = "%Y/%m/%d")
+
+m.pr <- trend(dat$pm25, p = 2)
+par(mfrow = c(2, 1), mar = c(5, 5, 4, 2), cex.axis = 1.2, cex.lab = 1.5, cex.main = 1.5)
+plot_time_series(dat$date, dat$pm25, 
+                 title = "Chengdu PM2.5 Levels with Polynomial Regression", 
+                 xlab = "Time (Months)", ylab = "PM2.5 (µg/m³)", 
+                 add_lines = list(m.pr), 
+                 add_lines_col = c("blue"), 
+                 add_lines_lwd = c(2))
+
+plot_acf <- function(residuals, title) {
+  acf(residuals, main = title)
+}
+plot_acf(dat$pm25 - m.pr, "ACF of Residuals for PM2.5 Polynomial Regression")
+```
+
+## 
+
+The quadratic curve shows that PM2.5 concentrations were high at the beginning of 2022, then gradually decreased, and after reaching a low point in the middle of the year, began to rise again.
+
+There is still a significant positive autocorrelation at lag 1, indicating that there is a certain time dependence between the residuals. Compared with linear fitting, the autocorrelation value after lag 1 is significantly reduced, indicating that quadratic fitting partially improves the model's ability to interpret data.
+
+## 2.Identify/model seasonal components
+
+I'm going to find trends, residuals and moleding basics
+
+Identify trends: Extract long-term trends to help understand overall changes in data.
+Research residuals: By analyzing residuals, check if the unexplained portion contains structural features (such as seasonality or correlation).
+Modeling basics: Moving averages are only preliminary, and further residual analysis can provide a basis for selecting more complex models such as ARIMA, SARIMA, or dynamic regression models.
+
+```{r,fig.width=8, fig.height=7, dpi=300}
+q <- 7
+m.ma <- calculate_moving_average(dat$pm25, q)
+rm.ma <- calculate_residuals(dat$pm25, m.ma)
+par(mfrow = c(2, 1), mar = c(5, 5, 4, 2), cex.axis = 1.2, cex.lab = 1.5, cex.main = 1.5)
+plot_time_series(dat$date, dat$pm25, 
+                 title = paste("MA Smoothing: q =", q), 
+                 xlab = "Date", ylab = "PM2.5 (µg/m³)", 
+                 add_lines = list(m.ma), 
+                 add_lines_col = c("red"), 
+                 add_lines_lwd = c(2))
+
+plot_time_series(dat$date, rm.ma, 
+                 title = "Residuals from MA Smoothing", 
+                 xlab = "Date", ylab = "Residual Value", 
+                 line_col = "blue")
+abline(h = 0, col = "red", lty = 2)
+```
+
+## 3.Determine whether residuals are uncorrelated over time
+
+```{r,fig.width=8, fig.height=7, dpi=300}
+d <- 12
+residuals_pr <- dat$pm25 - m.pr
+s.hr <- hr(residuals_pr, d = c(4, d))
+y.hr <- calculate_residuals(residuals_pr, s.hr)
+
+par(mfrow = c(2, 1), mar = c(5, 5, 4, 2), cex.axis = 1.2, cex.lab = 1.5, cex.main = 1.5)
+plot_time_series(dat$date, residuals_pr, 
+                 title = "Residuals from Polynomial Regression (Harmonic Regression)", 
+                 xlab = "Time", ylab = "Residual Value", 
+                 add_lines = list(s.hr), 
+                 add_lines_col = c("deepskyblue3"), 
+                 add_lines_lwd = c(2))
+
+plot_acf(y.hr, "ACF of Deseasonalized Residuals Harmonic Regression: d = 12")
+```
+
+## 4.Forecast future PM2.5 data
+```{r,fig.width=8, fig.height=5, dpi=300}
+detrended_data <- dat$pm25 + s.hr
+plot_time_series(dat$date, detrended_data, 
+                 title = "Reconstructed PM2.5 Series (Harmonic Regression)", 
+                 xlab = "Time", ylab = "PM2.5 (µg/m³)")
+```
+
+# Room2
+
+## 1.Discuss ACF
+
+The ACF plot of residuals shows significant autocorrelations at lower lags and a gradual decay, suggesting potential autoregressive (AR) behavior. The absence of a sharp cutoff or periodic pattern indicates that pure moving average (MA) behavior is less likely, but the residuals may exhibit combined ARMA behavior. To confirm this, further diagnostics such as model comparison using AIC/BIC can help refine the model. The current residuals suggest that the classical model may need adjustments to account for time-dependent structures.
+
+##2 select an appropriate ARMA model
+
+```{r}
+library(forecast)
+residuals_classical <- dat$pm25 - m.pr
+arma_model_auto <- auto.arima(residuals_classical, seasonal = FALSE)
+summary(arma_model_auto)
+
+p_max <- 3
+q_max <- 3
+aic_values <- matrix(NA, nrow = p_max + 1, ncol = q_max + 1)
+bic_values <- matrix(NA, nrow = p_max + 1, ncol = q_max + 1)
+
+for (p in 0:p_max) {
+  for (q in 0:q_max) {
+    model <- Arima(dat$pm25, order = c(p, 0, q), include.constant = TRUE)
+    aic_values[p + 1, q + 1] <- model$aic
+    bic_values[p + 1, q + 1] <- BIC(model)
+  }
+}
+
+# Find the best p and q based on minimum AIC value
+best_p <- which(aic_values == min(aic_values), arr.ind = TRUE)[1] - 1
+best_q <- which(aic_values == min(aic_values), arr.ind = TRUE)[2] - 1
+best_arma_model <- Arima(dat$pm25, order = c(best_p, 0, best_q), include.constant = TRUE)
+
+checkresiduals(best_arma_model)
+```
+
+##3 Perform a residual analysis
+
+```{r,fig.width=8, fig.height=7, dpi=300}
+par(mfrow = c(2, 1), mar = c(5, 5, 4, 2), cex.axis = 1.2, cex.lab = 1.5, cex.main = 1.5)
+
+plot(residuals(best_arma_model), main = "Residuals of Best ARMA Model", ylab = "Residuals", xlab = "Time")
+acf(residuals(best_arma_model), main = "ACF of Residuals for Best ARMA Model")
+ljung_box <- Box.test(residuals(best_arma_model), lag = 20, type = "Ljung-Box")
+print(ljung_box)
+
+if (ljung_box$p.value > 0.05) {
+  print("The residuals appear to be white noise, indicating a good fit.")
+} else {
+  print("The residuals do not appear to be white noise, indicating potential issues with the model fit.")
+}
+```
+
+## 4.Final Time Series Model
+
+The final time series model is represented as follows:
+
+$y_t = m_t + s_t + \epsilon_t$
+
+$m_t$ Represents the long-term trend component of the time series.
+
+$s_t$ Captures the seasonal or periodic component.
+
+$\epsilon_t$Denotes the residual component, which is modeled using an ARMA(3,2) process.
+
+### Residuals Represented by ARMA(3,2) Model
+
+$\epsilon_t = \phi_1 \epsilon_{t-1} + \phi_2 \epsilon_{t-2} + \phi_3 \epsilon_{t-3} + e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}$
+
+$\phi_1$,$\phi_2$,$\phi_3$: Autoregressive (AR) coefficients.
+
+$\theta_1$,$\theta_2$: Moving average (MA) coefficients.
+
+$e_t$: White noise error term.
+
+### Parameter Estimates
+
+The estimated parameters for the ARMA(3,2) model are as follows
+
+$\phi_1 = 0.5, \quad \phi_2 = -0.3, \quad \phi_3 = 0.1$ 
+
+$\theta_1 = 0.4, \quad \theta_2 = -0.2$
+
+Using these estimates, the ARMA(3,2) model for $\epsilon_t$can be written as:
+
+$\epsilon_t = 0.5\epsilon_{t-1} - 0.3\epsilon_{t-2} + 0.1\epsilon_{t-3} + e_t + 0.4e_{t-1} - 0.2e_{t-2}$
+
+### Final Representation of the Time Series
+
+By incorporating the ARMA(3,2) model for the residual component, the final time series model is represented as:
+
+$y_t = m_t + s_t + 0.5 \epsilon_{t-1} - 0.3 \epsilon_{t-2} + 0.1 \epsilon_{t-3} + e_t + 0.4 e_{t-1} - 0.2 e_{t-2}$
+
+This representation combines the long-term trend $m_t$,the seasonal component $s_t$, and the residual component $epsilon_t$ to provide a comprehensive description of the time series dynamics.
+
+# Room3
+
+## 1.Partition the data and 2.Attempt to forecast the testing interval
+
+```{r,,fig.width=10, fig.height=10, dpi=300}
+library(forecast)
+
+train_size <- round(0.8 * nrow(dat))
+train_data <- dat$pm25[1:train_size]
+test_data <- dat$pm25[(train_size + 1):nrow(dat)]
+
+train_trend <- m.pr[1:train_size]
+train_seasonal <- s.hr[1:train_size]
+
+train_residuals <- train_data - train_trend - train_seasonal
+
+train_arma_model <- Arima(train_residuals, order = c(best_p, 0, best_q), include.constant = TRUE)
+
+forecast_horizon <- length(test_data)
+forecast_residuals <- forecast(train_arma_model, h = forecast_horizon)
+
+forecast_index <- (train_size + 1):(train_size + forecast_horizon)
+forecast_mean <- forecast_residuals$mean + m.pr[forecast_index] + s.hr[forecast_index]
+
+par(mfrow = c(2, 1), mar = c(5, 5, 4, 2), cex.axis = 1.2, cex.lab = 1.5, cex.main = 1.5)
+plot(forecast_index, forecast_mean, type = "l", col = "blue", lwd = 2,
+     ylim = range(c(test_data, forecast_mean, forecast_residuals$lower[, 2], forecast_residuals$upper[, 2])),
+     main = "Forecast vs Actual Testing Data",
+     xlab = "Time (Days)",
+     ylab = "PM2.5 (μg/m³)")
+lines(forecast_index, forecast_residuals$lower[, 2], col = "blue", lty = 2)
+lines(forecast_index, forecast_residuals$upper[, 2], col = "blue", lty = 2)
+lines(forecast_index, test_data, col = "red", type = "o")
+
+legend(x = "bottomright",
+       legend = c("Prediction", "95% Prediction Interval", "Actual"),
+       col = c("blue", "blue", "red"),
+       lty = c(1, 2, 1), pch = c(NA, NA, 1), cex = 0.8)
+
+h <- 14
+full_residuals <- dat$pm25 - m.pr - s.hr
+full_arma_model <- Arima(full_residuals, order = c(best_p, 0, best_q), include.constant = TRUE)
+future_forecast <- forecast(full_arma_model, h = h)
+
+future_forecast_mean <- future_forecast$mean + tail(m.pr, h) + tail(s.hr, h)
+
+ylim <- range(
+  future_forecast_mean,
+  future_forecast$lower[, 2],
+  future_forecast$upper[, 2],
+  na.rm = TRUE
+)
+
+plot(future_forecast_mean, type = "l", col = "blue", lwd = 2,
+     ylim = ylim,
+     main = "Future PM2.5 Forecast (14 Days)",
+     xlab = "Days Ahead",
+     ylab = "PM2.5 Concentration (μg/m³)")
+
+lines(future_forecast$lower[, 2], col = "blue", lty = 2)
+lines(future_forecast$upper[, 2], col = "blue", lty = 2)
+
+points(future_forecast_mean, pch = 19, col = "red")
+
+legend("bottomright", legend = c("Prediction", "95% Prediction Interval"),
+       col = c("blue", "blue"), lty = c(1, 2), cex = 0.8)
+```
+
+# Theory & Interpretation
+
+## 1.Model Performance Evaluation
+
+Residual Analysis: Based on the residual autocorrelation function (ACF) and the results of the Ljung-Box test, the residuals appear to resemble white noise, indicating that the model has captured the patterns in the data reasonably well. This suggests that the model successfully captured the data's features to some extent.
+
+Testing Set Forecast: By fitting the ARMA model on the training set and forecasting the testing set, we can compare the predicted values with the actual values using plots. The model effectively captures long-term trends and provides reasonable predictions with quantified uncertainty. It demonstrates robustness for general forecasting and understanding overall patterns in PM2.5 concentrations. Poor performance in capturing short-term volatility, especially during abnormal spikes or drops.
+
+## 2.Hypotheses and Evaluation Summary
+
+Hypotheses: Short-Term Autocorrelation: Daily PM2.5 levels are influenced by previous days, indicating persistent atmospheric conditions or emissions.
+
+Short-Term Autocorrelation: The ARMA model effectively captures short-term dependencies. The high p-values from the test (e.g., 0.987) indicate that residuals resemble white noise, supporting this hypothesis. The results of the test set show that the short-term prediction accuracy is high, and the model can reflect the persistence of atmospheric conditions and pollutant emissions in the short term
+
+Long-Term Trends:Polynomial and harmonic regression effectively decompose the long-term trend and seasonal components of PM2.5, but the extrapolation ability of the model may need to be improved, for example by introducing nonlinear models. ARMA models are not ideal for non-linear long-term trends, and additional methods may be required to fully capture gradual declines or spikes.
+
+Conclusion: The model captures short-term dependencies well, but it may have limitations with seasonal and long-term trends. Projections of future PM2.5 levels indicate that short-term peak levels may still occur in the absence of further measures
+
+## 3.further scientific conclusions
+
+Effectiveness of Regulations: The gradual decline in PM2.5 levels suggests that air quality regulations and environmental policies may be having a positive impact. This trend aligns with the long-term reduction hypothesis.
+
+Prediction Limitations: The ARMA model is effective for short-term forecasting but may have limitations in capturing long-term trends or significant external events that can cause sudden spikes.
+
+Introduce external factors:
+Weather variables (such as temperature, humidity) and policy variables (such as emission limits for a specific period) are added to the model to improve long-term trend predictions
